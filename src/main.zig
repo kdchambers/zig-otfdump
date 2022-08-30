@@ -256,8 +256,8 @@ fn dump(font_data: []const u8) !void {
         };
         var reader = fixed_buffer_stream.reader();
 
-        const version_major = try reader.readIntBig(u16);
-        const version_minor = try reader.readIntBig(u16);
+        const version_major = try reader.readIntBig(i16);
+        const version_minor = try reader.readIntBig(i16);
         const glyph_count = try reader.readIntBig(u16);
         const max_points = try reader.readIntBig(u16);
         const max_contours = try reader.readIntBig(u16);
@@ -303,8 +303,8 @@ fn dump(font_data: []const u8) !void {
         };
         var reader = fixed_buffer_stream.reader();
 
-        const version_major = try reader.readIntBig(u16);
-        const version_minor = try reader.readIntBig(u16);
+        const version_major = try reader.readIntBig(i16);
+        const version_minor = try reader.readIntBig(i16);
         const font_revision_major = try reader.readIntBig(u16);
         const font_revision_minor = try reader.readIntBig(u16);
         const checksum_adjustment = try reader.readIntBig(u32);
@@ -405,6 +405,45 @@ fn dump(font_data: []const u8) !void {
         print("  font_direction_hint: {d}\n", .{font_direction_hint});
         print("  index_to_loc_format: {d}\n", .{index_to_loc_format});
         print("  glyph_data_format:   {d}\n", .{glyph_data_format});
+    }
+
+    {
+        print("\nhhea (required)\n", .{});
+        var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+            .buffer = font_data,
+            .pos = data_sections.hhea.offset,
+        };
+        var reader = fixed_buffer_stream.reader();
+
+        const version_major = try reader.readIntBig(i16);
+        const version_minor = try reader.readIntBig(i16);
+        const ascent = try reader.readIntBig(i16);
+        const descent = try reader.readIntBig(i16);
+        const line_gap = try reader.readIntBig(i16);
+        const advance_width_max = try reader.readIntBig(u16);
+        const min_leftside_bearing = try reader.readIntBig(i16);
+        const min_rightside_bearing = try reader.readIntBig(i16);
+        const x_max_extent = try reader.readIntBig(i16);
+        const caret_slope_rise = try reader.readIntBig(i16);
+        const caret_slope_run = try reader.readIntBig(i16);
+        const caret_offset = try reader.readIntBig(i16);
+        try reader.skipBytes(@sizeOf(u16) * 4, .{});
+        const metric_data_format = try reader.readIntBig(i16);
+        const long_hor_metrics_count = try reader.readIntBig(u16);
+
+        print("  version:                {d}.{d}\n", .{ version_major, version_minor });
+        print("  ascent:                 {d}\n", .{ascent});
+        print("  descent:                {d}\n", .{descent});
+        print("  line_gap:               {d}\n", .{line_gap});
+        print("  advance_width_max:      {d}\n", .{advance_width_max});
+        print("  min_leftside_bearing:   {d}\n", .{min_leftside_bearing});
+        print("  min_rightside_bearing:  {d}\n", .{min_rightside_bearing});
+        print("  x_max_extent:           {d}\n", .{x_max_extent});
+        print("  caret_slope_rise:       {d}\n", .{caret_slope_rise});
+        print("  caret_slope_run:        {d}\n", .{caret_slope_run});
+        print("  caret_offset:           {d}\n", .{caret_offset});
+        print("  metric_data_format:     {d}\n", .{metric_data_format});
+        print("  long_hor_metrics_count: {d}\n", .{long_hor_metrics_count});
     }
 
     {
