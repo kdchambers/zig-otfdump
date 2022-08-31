@@ -119,10 +119,10 @@ pub fn main() !void {
     const font_data = try font_file.readToEndAlloc(allocator, max_ttf_filesize);
     defer allocator.free(font_data);
 
-    try dump(font_data);
+    try dump(allocator, font_data);
 }
 
-fn dump(font_data: []const u8) !void {
+fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
     const print = std.debug.print;
 
     var data_sections = DataSections{};
@@ -407,6 +407,7 @@ fn dump(font_data: []const u8) !void {
         print("  glyph_data_format:   {d}\n", .{glyph_data_format});
     }
 
+    var long_hor_metrics_count: u16 = undefined;
     {
         print("\nhhea (required)\n", .{});
         var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
@@ -429,7 +430,7 @@ fn dump(font_data: []const u8) !void {
         const caret_offset = try reader.readIntBig(i16);
         try reader.skipBytes(@sizeOf(u16) * 4, .{});
         const metric_data_format = try reader.readIntBig(i16);
-        const long_hor_metrics_count = try reader.readIntBig(u16);
+        long_hor_metrics_count = try reader.readIntBig(u16);
 
         print("  version:                {d}.{d}\n", .{ version_major, version_minor });
         print("  ascent:                 {d}\n", .{ascent});
@@ -444,6 +445,36 @@ fn dump(font_data: []const u8) !void {
         print("  caret_offset:           {d}\n", .{caret_offset});
         print("  metric_data_format:     {d}\n", .{metric_data_format});
         print("  long_hor_metrics_count: {d}\n", .{long_hor_metrics_count});
+    }
+
+    {
+        print("\nhmtx (required)\n", .{});
+        var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+            .buffer = font_data,
+            .pos = data_sections.hmtx.offset,
+        };
+        var reader = fixed_buffer_stream.reader();
+
+        const HorizontalMetric = extern struct {
+            advance_width: u16,
+            leftside_bearing: i16,
+        };
+        var horizontal_metrics = try allocator.alloc(HorizontalMetric, long_hor_metrics_count);
+        defer allocator.free(horizontal_metrics);
+
+        print("  Horizontal metrics:\n", .{});
+
+        var i: usize = 0;
+        while (i < long_hor_metrics_count) : (i += 1) {
+            horizontal_metrics[i] = try reader.readStruct(HorizontalMetric);
+            print("    {d:2}. advance width {d}. leftside bearing {d}\n", .{
+                i + 1,
+                horizontal_metrics[i].advance_width,
+                horizontal_metrics[i].leftside_bearing,
+            });
+        }
+
+        // TODO: Load + render leftSideBearing array
     }
 
     {
