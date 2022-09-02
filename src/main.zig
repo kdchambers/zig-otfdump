@@ -23,9 +23,10 @@ const DataSections = struct {
     svg: SectionRange = .{},
     maxp: SectionRange = .{},
     cmap: SectionRange = .{},
+    name: SectionRange = .{},
 };
 
-const CMAPPlatformID = enum(u16) {
+const PlatformID = enum(u16) {
     unicode = 0,
     macintosh = 1,
     reserved = 2,
@@ -212,6 +213,12 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
             if (std.mem.eql(u8, "maxp", tag)) {
                 data_sections.maxp.offset = offset;
                 data_sections.maxp.length = length;
+                continue;
+            }
+
+            if (std.mem.eql(u8, "name", tag)) {
+                data_sections.name.offset = offset;
+                data_sections.name.length = length;
                 continue;
             }
         }
@@ -459,6 +466,11 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
             advance_width: u16,
             leftside_bearing: i16,
         };
+
+        comptime {
+            std.debug.assert(@sizeOf(HorizontalMetric) == 4);
+        }
+
         var horizontal_metrics = try allocator.alloc(HorizontalMetric, long_hor_metrics_count);
         defer allocator.free(horizontal_metrics);
 
@@ -492,7 +504,7 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         print("  subtables:\n", .{});
         var i: usize = 0;
         while (i < subtable_count) : (i += 1) {
-            const platform_id = try reader.readEnum(CMAPPlatformID, .Big);
+            const platform_id = try reader.readEnum(PlatformID, .Big);
             const platform_spec_string = blk: {
                 const raw_value = try reader.readIntBig(u16);
                 switch (platform_id) {
@@ -512,6 +524,111 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
             const offset = try reader.readIntBig(u32);
             _ = offset;
             print("    {d:2}. {s}.{s}\n", .{ i + 1, @tagName(platform_id), platform_spec_string });
+        }
+    }
+
+    if (!data_sections.name.isNull()) {
+        print("\nname\n", .{});
+        var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+            .buffer = font_data,
+            .pos = data_sections.name.offset,
+        };
+        var reader = fixed_buffer_stream.reader();
+
+        const format = try reader.readIntBig(u16);
+        const count = try reader.readIntBig(u16);
+        const string_offset = try reader.readIntBig(u16);
+
+        if (format != 0) {
+            std.log.err("Format {d} for name table not implemented", .{format});
+            return;
+        }
+
+        const PlatformSpecificID = u16;
+        const LanguageID = u16;
+
+        const NameIdentifierCode = enum(u16) {
+            copyright = 0,
+            font_family = 1,
+            font_subfamily = 2,
+            unique_subfamily_id = 3,
+            font_fullname = 4,
+            table_version = 5,
+            postscript_name = 6,
+            trademark_notice = 7,
+            manufacturer_name = 8,
+            designer = 9,
+            typeface_description = 10,
+            font_vendor_url = 11,
+            font_designer_url = 12,
+            license_description = 13,
+            license_information_url = 14,
+            reserved_0 = 15,
+            preferred_family = 16,
+            preferred_subfamily = 17,
+            compatible_full = 18,
+            sample_text = 19,
+            wws_family_name = 21,
+            wws_subfamily_name = 22,
+            light_background_palette = 23,
+            dark_background_palette = 24,
+            unknown = std.math.maxInt(u16),
+            _,
+        };
+
+        const NameRecord = extern struct {
+            platform_id: PlatformID,
+            platform_specific_id: PlatformSpecificID,
+            language_id: LanguageID,
+            name_id: NameIdentifierCode,
+            length: u16,
+            offset: u16,
+        };
+
+        comptime {
+            std.debug.assert(@sizeOf(NameRecord) == 12);
+        }
+
+        var name_records = try allocator.alloc(NameRecord, count);
+        defer allocator.free(name_records);
+
+        for (name_records) |*name_record| {
+            name_record.*.platform_id = try reader.readEnum(PlatformID, .Big);
+            name_record.*.platform_specific_id = try reader.readIntBig(PlatformSpecificID);
+            name_record.*.language_id = try reader.readIntBig(LanguageID);
+            name_record.*.name_id = reader.readEnum(NameIdentifierCode, .Big) catch .unknown;
+            name_record.*.length = try reader.readIntBig(u16);
+            name_record.*.offset = try reader.readIntBig(u16);
+        }
+
+        print("  Found records:\n", .{});
+        const data_section_offset = @intCast(usize, data_sections.name.offset);
+        const base_string_buffer = font_data[data_section_offset + string_offset ..];
+        for (name_records) |*name_record, name_record_i| {
+            const name_record_offset = @intCast(usize, name_record.offset);
+            const string_value = base_string_buffer[name_record_offset .. name_record_offset + name_record.length];
+            switch (name_record.name_id) {
+                .copyright => print("    {d:2}. copyright:               \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .font_family => print("    {d:2}. font family:             \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .font_subfamily => print("    {d:2}. font subfamily:          \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .unique_subfamily_id => print("    {d:2}. unique font subfamily:   \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .font_fullname => print("    {d:2}. font fullname:           \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .table_version => print("    {d:2}. table version:           \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .postscript_name => print("    {d:2}. postscript name:         \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .trademark_notice => print("    {d:2}. trademark notice:        \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .manufacturer_name => print("    {d:2}. manufactorer name:       \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .designer => print("    {d:2}. designer:                \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .typeface_description => print("    {d:2}. typeface description: \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .font_vendor_url => print("    {d:2}. font vendor url:         \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .font_designer_url => print("    {d:2}. font designer url:       \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .license_description => print("    {d:2}. license description:     \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .license_information_url => print("    {d:2}. license description url: \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .preferred_family => print("    {d:2}. preferred family:        \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .preferred_subfamily => print("    {d:2}. preferred subfamily:     \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .compatible_full => print("    {d:2}. compatible full:         \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                .sample_text => print("    {d:2}. sample text:             \"{s}\"\n", .{ name_record_i + 1, string_value }),
+                else => print("    {d:2}. unknown:                 \"{s}\"\n", .{ name_record_i + 1, string_value }),
+            }
         }
     }
 
