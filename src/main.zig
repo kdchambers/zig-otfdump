@@ -28,6 +28,7 @@ const DataSections = struct {
     name: SectionRange = .{},
     os2: SectionRange = .{},
     svg: SectionRange = .{},
+    vmtx: SectionRange = .{},
 };
 
 const PlatformID = enum(u16) {
@@ -235,6 +236,12 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
             if (std.mem.eql(u8, "OS/2", tag)) {
                 data_sections.os2.offset = offset;
                 data_sections.os2.length = length;
+                continue;
+            }
+
+            if (std.mem.eql(u8, "vmtx", tag)) {
+                data_sections.vmtx.offset = offset;
+                data_sections.vmtx.length = length;
                 continue;
             }
         }
@@ -527,15 +534,17 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
 
         print("  Horizontal metrics:\n", .{});
 
+        const clamped_count = @min(10, long_hor_metrics_count);
         var i: usize = 0;
-        while (i < long_hor_metrics_count) : (i += 1) {
+        while (i < clamped_count) : (i += 1) {
             horizontal_metrics[i] = try reader.readStruct(HorizontalMetric);
-            print("    {d:2}. advance width {d}. leftside bearing {d}\n", .{
+            print("    {d:2}. advance width {d:5} - leftside bearing {d:5}\n", .{
                 i + 1,
                 horizontal_metrics[i].advance_width,
                 horizontal_metrics[i].leftside_bearing,
             });
         }
+        print("({d} entries omitted)\n", .{long_hor_metrics_count - clamped_count});
 
         // TODO: Load + render leftSideBearing array
     }
