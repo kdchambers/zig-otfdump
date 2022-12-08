@@ -12,19 +12,22 @@ const SectionRange = struct {
     }
 };
 
+const Tag = u32;
+
 const DataSections = struct {
+    cmap: SectionRange = .{},
     dsig: SectionRange = .{},
-    loca: SectionRange = .{},
-    head: SectionRange = .{},
     glyf: SectionRange = .{},
+    gpos: SectionRange = .{},
+    head: SectionRange = .{},
     hhea: SectionRange = .{},
     hmtx: SectionRange = .{},
     kern: SectionRange = .{},
-    gpos: SectionRange = .{},
-    svg: SectionRange = .{},
+    loca: SectionRange = .{},
     maxp: SectionRange = .{},
-    cmap: SectionRange = .{},
     name: SectionRange = .{},
+    os2: SectionRange = .{},
+    svg: SectionRange = .{},
 };
 
 const PlatformID = enum(u16) {
@@ -228,6 +231,12 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
                 data_sections.name.length = length;
                 continue;
             }
+
+            if (std.mem.eql(u8, "OS/2", tag)) {
+                data_sections.os2.offset = offset;
+                data_sections.os2.length = length;
+                continue;
+            }
         }
     }
 
@@ -273,7 +282,7 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         print("  version: {d}\n", .{version});
         print("  flags: {d}\n", .{flags});
 
-        if(signature_count == 0) {
+        if (signature_count == 0) {
             print("\n  No signature records found\n", .{});
         }
 
@@ -287,9 +296,9 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         defer allocator.free(signature_records);
 
         var i: usize = 0;
-        while(i < signature_count) : (i += 1) {
+        while (i < signature_count) : (i += 1) {
             signature_records[i] = try reader.readStruct(SignatureRecord);
-            print("    {d} format {d} length {d}\n", .{i + 1, signature_records[i].format, signature_records[i].length});
+            print("    {d} format {d} length {d}\n", .{ i + 1, signature_records[i].format, signature_records[i].length });
         }
     }
 
@@ -529,6 +538,95 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         }
 
         // TODO: Load + render leftSideBearing array
+    }
+
+    {
+        print("\nOS/2 (required)\n", .{});
+        var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+            .buffer = font_data,
+            .pos = data_sections.os2.offset,
+        };
+        var reader = fixed_buffer_stream.reader();
+
+        const version = try reader.readIntBig(u16);
+        // TODO: Implement other versions
+        std.debug.assert(version == 4);
+
+        const xavg_char_width = try reader.readIntBig(i16);
+        const us_weight_class = try reader.readIntBig(u16);
+        const us_width_class = try reader.readIntBig(u16);
+        const fs_type = try reader.readIntBig(u16);
+        const y_subscript_xsize = try reader.readIntBig(i16);
+        const y_subscript_ysize = try reader.readIntBig(i16);
+        const y_subscript_xoffset = try reader.readIntBig(i16);
+        const y_subscript_yoffset = try reader.readIntBig(i16);
+        const y_superscript_xsize = try reader.readIntBig(i16);
+        const y_superscript_ysize = try reader.readIntBig(i16);
+        const y_superscript_xoffset = try reader.readIntBig(i16);
+        const y_superscript_yoffset = try reader.readIntBig(i16);
+        const y_strikeout_size = try reader.readIntBig(i16);
+        const y_strikeout_position = try reader.readIntBig(i16);
+        const y_family_class = try reader.readIntBig(i16);
+        var panose: [10]u8 = undefined;
+        _ = try reader.read(&panose);
+        const ul_unicode_range1 = try reader.readIntBig(u32);
+        const ul_unicode_range2 = try reader.readIntBig(u32);
+        const ul_unicode_range3 = try reader.readIntBig(u32);
+        const ul_unicode_range4 = try reader.readIntBig(u32);
+        const vender_id = try reader.readIntBig(Tag);
+        const fs_selection = try reader.readIntBig(u16);
+        const us_first_char_index = try reader.readIntBig(u16);
+        const us_last_char_index = try reader.readIntBig(u16);
+        const ascender = try reader.readIntBig(i16);
+        const descender = try reader.readIntBig(i16);
+        const line_gap = try reader.readIntBig(i16);
+        const win_ascent = try reader.readIntBig(u16);
+        const win_descent = try reader.readIntBig(u16);
+        const code_page_range1 = try reader.readIntBig(u32);
+        const code_page_range2 = try reader.readIntBig(u32);
+        const sx_height = try reader.readIntBig(i16);
+        const cap_height = try reader.readIntBig(i16);
+        const default_char = try reader.readIntBig(u16);
+        const break_char = try reader.readIntBig(u16);
+        const max_context = try reader.readIntBig(u16);
+
+        print("  version:               {d}\n", .{version});
+        print("  xavg_char_width:       {d}\n", .{xavg_char_width});
+        print("  us_weight_class:       {d}\n", .{us_weight_class});
+        print("  us_width_class:        {d}\n", .{us_width_class});
+        print("  fs_type:               {d}\n", .{fs_type});
+        print("  y_subscript_xsize:     {d}\n", .{y_subscript_xsize});
+        print("  y_subscript_ysize:     {d}\n", .{y_subscript_ysize});
+        print("  y_subscript_xoffset:   {d}\n", .{y_subscript_xoffset});
+        print("  y_subscript_yoffset:   {d}\n", .{y_subscript_yoffset});
+        print("  y_superscript_xsize:   {d}\n", .{y_superscript_xsize});
+        print("  y_superscript_ysize:   {d}\n", .{y_superscript_ysize});
+        print("  y_superscript_xoffset: {d}\n", .{y_superscript_xoffset});
+        print("  y_superscript_yoffset: {d}\n", .{y_superscript_yoffset});
+        print("  y_strikeout_size:      {d}\n", .{y_strikeout_size});
+        print("  y_strikeout_position:  {d}\n", .{y_strikeout_position});
+        print("  y_family_class:        {d}\n", .{y_family_class});
+        print("  panose:                {b}\n", .{panose});
+        print("  ul_unicode_range1:     {d}\n", .{ul_unicode_range1});
+        print("  ul_unicode_range2:     {d}\n", .{ul_unicode_range2});
+        print("  ul_unicode_range3:     {d}\n", .{ul_unicode_range3});
+        print("  ul_unicode_range4:     {d}\n", .{ul_unicode_range4});
+        print("  vender_id:             {d}\n", .{vender_id});
+        print("  fs_selection:          {d}\n", .{fs_selection});
+        print("  us_first_char_index:   {d}\n", .{us_first_char_index});
+        print("  us_last_char_index:    {d}\n", .{us_last_char_index});
+        print("  ascender:              {d}\n", .{ascender});
+        print("  descender:             {d}\n", .{descender});
+        print("  line_gap:              {d}\n", .{line_gap});
+        print("  win_ascent:            {d}\n", .{win_ascent});
+        print("  win_descent:           {d}\n", .{win_descent});
+        print("  code_page_range1:      {d}\n", .{code_page_range1});
+        print("  code_page_range2:      {d}\n", .{code_page_range2});
+        print("  sx_height:             {d}\n", .{sx_height});
+        print("  cap_height:            {d}\n", .{cap_height});
+        print("  default_char:          {d}\n", .{default_char});
+        print("  break_char:            {d}\n", .{break_char});
+        print("  max_context:           {d}\n", .{max_context});
     }
 
     {
