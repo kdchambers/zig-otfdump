@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const font_path = "assets/RobotoMono.ttf";
+const font_path = "assets/Roboto-Medium.ttf";
 const max_ttf_filesize = 100 * 1024 * 1024;
 
 const SectionRange = struct {
@@ -13,6 +13,25 @@ const SectionRange = struct {
 };
 
 const Tag = u32;
+
+// https://learn.microsoft.com/en-us/typography/opentype/spec/gpos
+const GPosLookupType = enum(u32) {
+    single_adjustment = 1,
+    pair_adjustment = 2,
+    cursive_adjustment = 3,
+    mark_to_base = 4,
+    mark_to_ligature = 5,
+    mark_to_mark = 6,
+    context = 7,
+    chained_context = 8,
+    extension = 9,
+    _,
+};
+
+const ScriptRecord = extern struct {
+    tag: Tag,
+    offset: u16,
+};
 
 const DataSections = struct {
     cmap: SectionRange = .{},
@@ -355,6 +374,85 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         print("  max_component_depth:     {d}\n", .{max_component_depth});
     }
 
+    if (!data_sections.gpos.isNull()) {
+        print("\ngpos\n", .{});
+        var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+            .buffer = font_data,
+            .pos = data_sections.gpos.offset,
+        };
+        var reader = fixed_buffer_stream.reader();
+
+        const version_major = try reader.readIntBig(i16);
+        const version_minor = try reader.readIntBig(i16);
+        const script_list_offset = (try reader.readIntBig(u16)) + data_sections.gpos.offset;
+        const feature_list_offset = try reader.readIntBig(u16);
+        const lookup_list_offset = try reader.readIntBig(u16);
+
+        if (version_major != 1) {
+            std.log.warn("GPOS header major version number invalid {d}", .{version_major});
+        }
+
+        if (!(version_minor == 0 or version_minor == 1)) {
+            std.log.warn("GPOS header minor version number invalid {d}", .{version_minor});
+        }
+
+        const feature_variation_offset_opt = blk: {
+            if (version_minor == 1) {
+                break :blk try reader.readIntBig(u32);
+            }
+            break :blk null;
+        };
+
+        _ = feature_list_offset;
+        _ = lookup_list_offset;
+        _ = feature_variation_offset_opt;
+
+        print("  version: {d}.{d}\n", .{ version_major, version_minor });
+
+        try fixed_buffer_stream.seekTo(script_list_offset);
+        const script_count = try reader.readIntBig(u16);
+        var previous_offset: usize = undefined;
+        var index: u8 = 'a';
+        var selected_lang_offset: u16 = undefined;
+
+        var i: usize = 0;
+        while (i < script_count) : (i += 1) {
+            var tag: [4]u8 = undefined;
+            _ = try reader.read(&tag);
+            const offset = try reader.readIntBig(u16);
+            previous_offset = try fixed_buffer_stream.getPos();
+            try fixed_buffer_stream.seekTo(script_list_offset + offset);
+
+            const default_lang_offset = try reader.readIntBig(u16);
+            var lang_count = try reader.readIntBig(u16);
+            print("  {d:2}. tag {s} lang count {d}", .{ i + 1, tag, lang_count });
+            if (std.mem.eql(u8, "DFLT", &tag)) {
+                selected_lang_offset = default_lang_offset + offset;
+            }
+            print("\n", .{});
+
+            var j: usize = 0;
+            while (j < lang_count) : (j += 1) {
+                var lang_tag: [4]u8 = undefined;
+                _ = try reader.read(&lang_tag);
+                const lang_offset = try reader.readIntBig(u16);
+                print("    {c:2}. tag {s} offset {d}\n", .{ index + @intCast(u8, j), lang_tag, lang_offset });
+            }
+
+            try fixed_buffer_stream.seekTo(previous_offset);
+        }
+
+        try fixed_buffer_stream.seekTo(script_list_offset + selected_lang_offset);
+        const lookup_order_offset = try reader.readIntBig(u16);
+        const required_feature_index = try reader.readIntBig(u16);
+        const feature_index_count = try reader.readIntBig(u16);
+
+        print("  Selected Language:\n", .{});
+        print("    feature_index_count:    {d}\n", .{feature_index_count});
+        print("    lookup_order_offset:    {d}\n", .{lookup_order_offset});
+        print("    required_feature_index: 0x{x}\n", .{required_feature_index});
+    }
+
     {
         //
         // https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6head.html
@@ -559,7 +657,7 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
 
         const version = try reader.readIntBig(u16);
         // TODO: Implement other versions
-        std.debug.assert(version == 4);
+        std.debug.assert(version == 4 or version == 3 or version == 2);
 
         const xavg_char_width = try reader.readIntBig(i16);
         const us_weight_class = try reader.readIntBig(u16);
