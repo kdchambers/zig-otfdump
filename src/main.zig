@@ -15,7 +15,7 @@ const SectionRange = struct {
 const Tag = u32;
 
 // https://learn.microsoft.com/en-us/typography/opentype/spec/gpos
-const GPosLookupType = enum(u32) {
+const GPosLookupType = enum(u16) {
     single_adjustment = 1,
     pair_adjustment = 2,
     cursive_adjustment = 3,
@@ -404,7 +404,6 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         };
 
         _ = feature_list_offset;
-        _ = lookup_list_offset;
         _ = feature_variation_offset_opt;
 
         print("  version: {d}.{d}\n", .{ version_major, version_minor });
@@ -451,6 +450,23 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         print("    feature_index_count:    {d}\n", .{feature_index_count});
         print("    lookup_order_offset:    {d}\n", .{lookup_order_offset});
         print("    required_feature_index: 0x{x}\n", .{required_feature_index});
+
+        try fixed_buffer_stream.seekTo(data_sections.gpos.offset + lookup_list_offset);
+        const lookup_entry_count = try reader.readIntBig(u16);
+
+        print("  Lookup Entries:\n", .{});
+        i = 0;
+        while (i < lookup_entry_count) : (i += 1) {
+            const lookup_offset = try reader.readIntBig(u16);
+            const saved_offset = try fixed_buffer_stream.getPos();
+            try fixed_buffer_stream.seekTo(data_sections.gpos.offset + lookup_list_offset + lookup_offset);
+            const lookup_type = try reader.readEnum(GPosLookupType, .Big);
+            const lookup_flag = try reader.readIntBig(u16);
+            const subtable_count = try reader.readIntBig(u16);
+            _ = lookup_flag;
+            print("  {d:2}. {s} subtable_count: {d}\n", .{ i + 1, @tagName(lookup_type), subtable_count });
+            try fixed_buffer_stream.seekTo(saved_offset);
+        }
     }
 
     {
