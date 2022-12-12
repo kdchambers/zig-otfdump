@@ -823,8 +823,7 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         var reader = fixed_buffer_stream.reader();
 
         const version = try reader.readIntBig(u16);
-        // TODO: Implement other versions
-        std.debug.assert(version == 4 or version == 3 or version == 2);
+        print("  version:               {d}\n", .{version});
 
         const xavg_char_width = try reader.readIntBig(i16);
         const us_weight_class = try reader.readIntBig(u16);
@@ -856,15 +855,7 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         const line_gap = try reader.readIntBig(i16);
         const win_ascent = try reader.readIntBig(u16);
         const win_descent = try reader.readIntBig(u16);
-        const code_page_range1 = try reader.readIntBig(u32);
-        const code_page_range2 = try reader.readIntBig(u32);
-        const sx_height = try reader.readIntBig(i16);
-        const cap_height = try reader.readIntBig(i16);
-        const default_char = try reader.readIntBig(u16);
-        const break_char = try reader.readIntBig(u16);
-        const max_context = try reader.readIntBig(u16);
 
-        print("  version:               {d}\n", .{version});
         print("  xavg_char_width:       {d}\n", .{xavg_char_width});
         print("  us_weight_class:       {d}\n", .{us_weight_class});
         print("  us_width_class:        {d}\n", .{us_width_class});
@@ -894,13 +885,26 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         print("  line_gap:              {d}\n", .{line_gap});
         print("  win_ascent:            {d}\n", .{win_ascent});
         print("  win_descent:           {d}\n", .{win_descent});
-        print("  code_page_range1:      {d}\n", .{code_page_range1});
-        print("  code_page_range2:      {d}\n", .{code_page_range2});
-        print("  sx_height:             {d}\n", .{sx_height});
-        print("  cap_height:            {d}\n", .{cap_height});
-        print("  default_char:          {d}\n", .{default_char});
-        print("  break_char:            {d}\n", .{break_char});
-        print("  max_context:           {d}\n", .{max_context});
+
+        if(version >= 1) {
+            const code_page_range1 = try reader.readIntBig(u32);
+            const code_page_range2 = try reader.readIntBig(u32);
+            print("  code_page_range1:      {d}\n", .{code_page_range1});
+            print("  code_page_range2:      {d}\n", .{code_page_range2});
+
+            if(version >= 2) {
+                const sx_height = try reader.readIntBig(i16);
+                const cap_height = try reader.readIntBig(i16);
+                const default_char = try reader.readIntBig(u16);
+                const break_char = try reader.readIntBig(u16);
+                const max_context = try reader.readIntBig(u16);
+                print("  sx_height:             {d}\n", .{sx_height});
+                print("  cap_height:            {d}\n", .{cap_height});
+                print("  default_char:          {d}\n", .{default_char});
+                print("  break_char:            {d}\n", .{break_char});
+                print("  max_context:           {d}\n", .{max_context});
+            }
+        }
     }
 
     {
