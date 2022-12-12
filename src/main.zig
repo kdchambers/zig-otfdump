@@ -28,6 +28,36 @@ const GPosLookupType = enum(u16) {
     _,
 };
 
+const ValueRecord = extern struct {
+    x_placement: i16,
+    y_placement: i16,
+    x_advance: i16,
+    y_advance: i16,
+    x_placement_device_offset: u16,
+    y_placement_device_offset: u16,
+    x_advance_device_offset: u16,
+    y_advance_device_offset: u16,
+};
+
+const ValueRecordFormatFlags = packed struct(u16) {
+    x_placement: bool,
+    y_placement: bool,
+    x_advance: bool,
+    y_advance: bool,
+    x_placement_device: bool,
+    y_placement_device: bool,
+    x_advance_device: bool,
+    y_advance_device: bool,
+    reserved_bit_8: bool,
+    reserved_bit_9: bool,
+    reserved_bit_10: bool,
+    reserved_bit_11: bool,
+    reserved_bit_12: bool,
+    reserved_bit_13: bool,
+    reserved_bit_14: bool,
+    reserved_bit_15: bool,
+};
+
 const ScriptRecord = extern struct {
     tag: Tag,
     offset: u16,
@@ -465,6 +495,78 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
             const subtable_count = try reader.readIntBig(u16);
             _ = lookup_flag;
             print("  {d:2}. {s} subtable_count: {d}\n", .{ i + 1, @tagName(lookup_type), subtable_count });
+
+            var j: usize = 0;
+            switch (lookup_type) {
+                .single_adjustment => {
+                    while (j < subtable_count) : (j += 1) {
+                        const subtable_offset = try reader.readIntBig(u16);
+                        const saved_lookup_offset = try fixed_buffer_stream.getPos();
+                        try fixed_buffer_stream.seekTo(data_sections.gpos.offset + lookup_list_offset + lookup_offset + subtable_offset);
+                        const pos_format = try reader.readIntBig(u16);
+                        const coverage_offset = try reader.readIntBig(u16);
+                        _ = coverage_offset;
+                        const format_flags = @bitCast(ValueRecordFormatFlags, try reader.readIntBig(u16));
+                        switch (pos_format) {
+                            1 => {
+                                var value_record: ValueRecord = undefined;
+                                value_record.x_placement = try reader.readIntBig(i16);
+                                value_record.y_placement = try reader.readIntBig(i16);
+                                value_record.x_advance = try reader.readIntBig(i16);
+                                value_record.y_advance = try reader.readIntBig(i16);
+                                value_record.x_placement_device_offset = try reader.readIntBig(u16);
+                                value_record.y_placement_device_offset = try reader.readIntBig(u16);
+                                value_record.x_advance_device_offset = try reader.readIntBig(u16);
+                                value_record.y_advance_device_offset = try reader.readIntBig(u16);
+                                print("   ======================================\n", .{});
+                                if (format_flags.x_placement)
+                                    print("      x_placement: {d}\n", .{value_record.x_placement});
+                                if (format_flags.y_placement)
+                                    print("      y_placement: {d}\n", .{value_record.y_placement});
+                                if (format_flags.x_advance)
+                                    print("      x_advance: {d}\n", .{value_record.x_advance});
+                                if (format_flags.y_advance)
+                                    print("      y_advance: {d}\n", .{value_record.y_advance});
+                            },
+                            2 => {
+                                // TODO:
+                                unreachable;
+                            },
+                            else => {
+                                std.log.warn("Invalid posFormat value '{d}' for Single Adjustment lookup", .{pos_format});
+                            },
+                        }
+                        try fixed_buffer_stream.seekTo(saved_lookup_offset);
+                    }
+                },
+                .pair_adjustment => {
+                    //
+                },
+                .cursive_adjustment => {
+                    //
+                },
+                .mark_to_base => {
+                    //
+                },
+                .mark_to_ligature => {
+                    //
+                },
+                .mark_to_mark => {
+                    //
+                },
+                .context => {
+                    //
+                },
+                .chained_context => {
+                    //
+                },
+                .extension => {
+                    //
+                },
+                else => {
+                    std.log.warn("Invalid lookup type", .{});
+                },
+            }
             try fixed_buffer_stream.seekTo(saved_offset);
         }
     }
