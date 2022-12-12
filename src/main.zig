@@ -785,28 +785,16 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         };
         var reader = fixed_buffer_stream.reader();
 
-        const HorizontalMetric = extern struct {
-            advance_width: u16,
-            leftside_bearing: i16,
-        };
-
-        comptime {
-            std.debug.assert(@sizeOf(HorizontalMetric) == 4);
-        }
-
-        var horizontal_metrics = try allocator.alloc(HorizontalMetric, long_hor_metrics_count);
-        defer allocator.free(horizontal_metrics);
-
         print("  Horizontal metrics:\n", .{});
-
         const clamped_count = @min(10, long_hor_metrics_count);
         var i: usize = 0;
         while (i < clamped_count) : (i += 1) {
-            horizontal_metrics[i] = try reader.readStruct(HorizontalMetric);
+            const advance_width = try reader.readIntBig(u16);
+            const leftside_bearing = try reader.readIntBig(i16);
             print("    {d:2}. advance width {d:5} - leftside bearing {d:5}\n", .{
                 i + 1,
-                horizontal_metrics[i].advance_width,
-                horizontal_metrics[i].leftside_bearing,
+                advance_width,
+                leftside_bearing,
             });
         }
         print("({d} entries omitted)\n", .{long_hor_metrics_count - clamped_count});
