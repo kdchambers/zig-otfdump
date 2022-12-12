@@ -886,13 +886,13 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         print("  win_ascent:            {d}\n", .{win_ascent});
         print("  win_descent:           {d}\n", .{win_descent});
 
-        if(version >= 1) {
+        if (version >= 1) {
             const code_page_range1 = try reader.readIntBig(u32);
             const code_page_range2 = try reader.readIntBig(u32);
             print("  code_page_range1:      {d}\n", .{code_page_range1});
             print("  code_page_range2:      {d}\n", .{code_page_range2});
 
-            if(version >= 2) {
+            if (version >= 2) {
                 const sx_height = try reader.readIntBig(i16);
                 const cap_height = try reader.readIntBig(i16);
                 const default_char = try reader.readIntBig(u16);
@@ -903,6 +903,13 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
                 print("  default_char:          {d}\n", .{default_char});
                 print("  break_char:            {d}\n", .{break_char});
                 print("  max_context:           {d}\n", .{max_context});
+
+                if (version >= 5) {
+                    const lower_optimal_point_size = try reader.readIntBig(u16);
+                    const upper_optimal_point_size = try reader.readIntBig(u16);
+                    print("  lower_optimal_pt_size: {d}\n", .{lower_optimal_point_size});
+                    print("  upper_optimal_pt_size: {d}\n", .{upper_optimal_point_size});
+                }
             }
         }
     }
