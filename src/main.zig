@@ -489,7 +489,8 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         while (i < lookup_entry_count) : (i += 1) {
             const lookup_offset = try reader.readIntBig(u16);
             const saved_offset = try fixed_buffer_stream.getPos();
-            try fixed_buffer_stream.seekTo(data_sections.gpos.offset + lookup_list_offset + lookup_offset);
+            const lookup_table_offset = data_sections.gpos.offset + lookup_list_offset + lookup_offset;
+            try fixed_buffer_stream.seekTo(lookup_table_offset);
             const lookup_type = try reader.readEnum(GPosLookupType, .Big);
             const lookup_flag = try reader.readIntBig(u16);
             const subtable_count = try reader.readIntBig(u16);
@@ -501,8 +502,9 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
                 .single_adjustment => {
                     while (j < subtable_count) : (j += 1) {
                         const subtable_offset = try reader.readIntBig(u16);
+                        const subtable_offset_absolute = lookup_table_offset + subtable_offset;
                         const saved_lookup_offset = try fixed_buffer_stream.getPos();
-                        try fixed_buffer_stream.seekTo(data_sections.gpos.offset + lookup_list_offset + lookup_offset + subtable_offset);
+                        try fixed_buffer_stream.seekTo(subtable_offset_absolute);
                         const pos_format = try reader.readIntBig(u16);
                         const coverage_offset = try reader.readIntBig(u16);
                         _ = coverage_offset;
@@ -532,15 +534,54 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
                                 // TODO:
                                 unreachable;
                             },
-                            else => {
-                                std.log.warn("Invalid posFormat value '{d}' for Single Adjustment lookup", .{pos_format});
-                            },
+                            else => std.log.warn("Invalid posFormat value '{d}' for Single Adjustment lookup", .{pos_format}),
                         }
                         try fixed_buffer_stream.seekTo(saved_lookup_offset);
                     }
                 },
                 .pair_adjustment => {
-                    //
+                    print("  Pair Adjustment\n", .{});
+                    while (j < subtable_count) : (j += 1) {
+                        print("    Subtable {d}\n", .{j + 1});
+                        const subtable_offset = try reader.readIntBig(u16);
+                        const subtable_offset_absolute = lookup_table_offset + subtable_offset;
+                        const saved_lookup_offset = try fixed_buffer_stream.getPos();
+                        try fixed_buffer_stream.seekTo(subtable_offset_absolute);
+                        const pos_format = try reader.readIntBig(u16);
+                        switch (pos_format) {
+                            1 => {
+                                const coverage_offset = try reader.readIntBig(u16);
+                                const coverage_offset_absolute = coverage_offset + subtable_offset_absolute;
+                                const saved_subtable_offset = try fixed_buffer_stream.getPos();
+                                try fixed_buffer_stream.seekTo(coverage_offset_absolute);
+                                const coverage_format = try reader.readIntBig(u16);
+                                switch (coverage_format) {
+                                    1 => {
+                                        const glyph_count = try reader.readIntBig(u16);
+                                        print("      {d} glyph entries in coverage\n", .{glyph_count});
+                                    },
+                                    2 => {
+                                        // TODO:
+                                        std.log.warn("posFormat 2 not implemented for `coverage` table", .{});
+                                    },
+                                    else => std.log.warn("Invalid coverage format {d}", .{coverage_format}),
+                                }
+                                try fixed_buffer_stream.seekTo(saved_subtable_offset);
+                                const value_format_1 = try reader.readIntBig(u16);
+                                const value_format_2 = try reader.readIntBig(u16);
+                                const pair_set_count = try reader.readIntBig(u16);
+                                print("      {d} pair sets\n", .{pair_set_count});
+                                _ = value_format_1;
+                                _ = value_format_2;
+                            },
+                            2 => {
+                                // TODO:
+                                std.log.warn("posFormat 2 not implemented for lookup type `pair_adjustment`", .{});
+                            },
+                            else => std.log.warn("Invalid posFormat ({d}) for lookup type `pair_adjustment`", .{pos_format}),
+                        }
+                        try fixed_buffer_stream.seekTo(saved_lookup_offset);
+                    }
                 },
                 .cursive_adjustment => {
                     //
