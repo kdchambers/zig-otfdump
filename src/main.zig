@@ -168,7 +168,15 @@ pub fn main() !void {
 
     var allocator = gpa.allocator();
 
-    const font_file = try std.fs.cwd().openFile(font_path, .{ .mode = .read_only });
+    const args = try std.process.argsAlloc(allocator);
+    defer allocator.free(args);
+
+    const font_file = blk: {
+        if (args.len > 1) {
+            break :blk try std.fs.cwd().openFile(args[1], .{ .mode = .read_only });
+        }
+        break :blk try std.fs.cwd().openFile(font_path, .{ .mode = .read_only });
+    };
     defer font_file.close();
 
     const font_data = try font_file.readToEndAlloc(allocator, max_ttf_filesize);
