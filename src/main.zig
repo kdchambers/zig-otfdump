@@ -331,7 +331,7 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
 
     print("\n======== Dumping tables ========\n", .{});
 
-    {
+    if (!data_sections.dsig.isNull()) {
         print("\nDSIG\n", .{});
         var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
             .buffer = font_data,
@@ -343,26 +343,23 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         const signature_count = try reader.readIntBig(u16);
         const flags = try reader.readIntBig(u16);
 
-        print("  version: {d}\n", .{version});
+        print("  version: {x}\n", .{version});
         print("  flags: {d}\n", .{flags});
 
         if (signature_count == 0) {
             print("\n  No signature records found\n", .{});
         }
 
-        const SignatureRecord = extern struct {
-            format: u32,
-            length: u32,
-            signature_offset_block: u32,
-        };
-
-        var signature_records = try allocator.alloc(SignatureRecord, signature_count);
-        defer allocator.free(signature_records);
-
         var i: usize = 0;
         while (i < signature_count) : (i += 1) {
-            signature_records[i] = try reader.readStruct(SignatureRecord);
-            print("    {d} format {d} length {d}\n", .{ i + 1, signature_records[i].format, signature_records[i].length });
+            const format = try reader.readIntBig(u32);
+            const length = try reader.readIntBig(u32);
+            const signature_offset_block = try reader.readIntBig(u32);
+            _ = signature_offset_block;
+            print("    {d:2}. format {d} length {d}\n", .{ i + 1, format, length });
+            if (format != 1) {
+                std.log.warn("DSIG format {d} is invalid", .{format});
+            }
         }
     }
 
