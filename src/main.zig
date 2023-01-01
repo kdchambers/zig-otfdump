@@ -1,4 +1,5 @@
 const std = @import("std");
+const print = std.debug.print;
 
 const font_path = "assets/Roboto-Medium.ttf";
 const max_ttf_filesize = 100 * 1024 * 1024;
@@ -12,7 +13,14 @@ const SectionRange = struct {
     }
 };
 
-const Tag = u32;
+const CMAPPlatformID = enum(u16) {
+    unicode = 0,
+    macintosh = 1,
+    reserved = 2,
+    microsoft = 3,
+};
+
+const Tag = [4]u8;
 
 // https://learn.microsoft.com/en-us/typography/opentype/spec/gpos
 const GPosLookupType = enum(u16) {
@@ -58,9 +66,28 @@ const ValueRecordFormatFlags = packed struct(u16) {
     reserved_bit_15: bool,
 };
 
-const ScriptRecord = extern struct {
+const LookupTable = extern struct {
+    lookup_type: GPosLookupType,
+    lookup_flag: u16,
+    subtable_count: u16,
+};
+
+const LanguageRecordTable = struct {
     tag: Tag,
     offset: u16,
+};
+
+// const ScriptRecordTable = struct {
+//     tag: Tag,
+//     offset: u16,
+// };
+
+const ScriptTable = struct {
+    tag: Tag,
+    script_table_offset: u16,
+    default_language_offset: u16,
+    language_count: u16,
+    language_records: []LanguageRecordTable,
 };
 
 const DataSections = struct {
@@ -162,6 +189,10 @@ fn BoundingBox(comptime T: type) type {
     };
 }
 
+var data_sections: DataSections = .{};
+var font_data: []const u8 = undefined;
+var cmap_encoding_table_offset: usize = 0;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -179,17 +210,13 @@ pub fn main() !void {
     };
     defer font_file.close();
 
-    const font_data = try font_file.readToEndAlloc(allocator, max_ttf_filesize);
+    font_data = try font_file.readToEndAlloc(allocator, max_ttf_filesize);
     defer allocator.free(font_data);
 
-    try dump(allocator, font_data);
+    try dump(allocator);
 }
 
-fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
-    const print = std.debug.print;
-
-    var data_sections = DataSections{};
-
+fn dump(allocator: std.mem.Allocator) !void {
     {
         var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){ .buffer = font_data, .pos = 0 };
         var reader = fixed_buffer_stream.reader();
@@ -329,6 +356,8 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         return error.RequiredSectionCMAPMissing;
     }
 
+    cmap_encoding_table_offset = try cmapOffset();
+
     print("\n======== Dumping tables ========\n", .{});
 
     if (!data_sections.dsig.isNull()) {
@@ -410,211 +439,10 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
     }
 
     if (!data_sections.gpos.isNull()) {
-        print("\ngpos\n", .{});
-        var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
-            .buffer = font_data,
-            .pos = data_sections.gpos.offset,
-        };
-        var reader = fixed_buffer_stream.reader();
-
-        const version_major = try reader.readIntBig(i16);
-        const version_minor = try reader.readIntBig(i16);
-        const script_list_offset = (try reader.readIntBig(u16)) + data_sections.gpos.offset;
-        const feature_list_offset = try reader.readIntBig(u16);
-        const lookup_list_offset = try reader.readIntBig(u16);
-
-        if (version_major != 1) {
-            std.log.warn("GPOS header major version number invalid {d}", .{version_major});
-        }
-
-        if (!(version_minor == 0 or version_minor == 1)) {
-            std.log.warn("GPOS header minor version number invalid {d}", .{version_minor});
-        }
-
-        const feature_variation_offset_opt = blk: {
-            if (version_minor == 1) {
-                break :blk try reader.readIntBig(u32);
-            }
-            break :blk null;
-        };
-
-        _ = feature_list_offset;
-        _ = feature_variation_offset_opt;
-
-        print("  version: {d}.{d}\n", .{ version_major, version_minor });
-
-        try fixed_buffer_stream.seekTo(script_list_offset);
-        const script_count = try reader.readIntBig(u16);
-        var previous_offset: usize = undefined;
-        var index: u8 = 'a';
-        var selected_lang_offset: u16 = undefined;
-
-        var i: usize = 0;
-        while (i < script_count) : (i += 1) {
-            var tag: [4]u8 = undefined;
-            _ = try reader.read(&tag);
-            const offset = try reader.readIntBig(u16);
-            previous_offset = try fixed_buffer_stream.getPos();
-            try fixed_buffer_stream.seekTo(script_list_offset + offset);
-
-            const default_lang_offset = try reader.readIntBig(u16);
-            var lang_count = try reader.readIntBig(u16);
-            print("  {d:2}. tag {s} lang count {d}", .{ i + 1, tag, lang_count });
-            if (std.mem.eql(u8, "DFLT", &tag)) {
-                selected_lang_offset = default_lang_offset + offset;
-            }
-            print("\n", .{});
-
-            var j: usize = 0;
-            while (j < lang_count) : (j += 1) {
-                var lang_tag: [4]u8 = undefined;
-                _ = try reader.read(&lang_tag);
-                const lang_offset = try reader.readIntBig(u16);
-                print("    {c:2}. tag {s} offset {d}\n", .{ index + @intCast(u8, j), lang_tag, lang_offset });
-            }
-
-            try fixed_buffer_stream.seekTo(previous_offset);
-        }
-
-        try fixed_buffer_stream.seekTo(script_list_offset + selected_lang_offset);
-        const lookup_order_offset = try reader.readIntBig(u16);
-        const required_feature_index = try reader.readIntBig(u16);
-        const feature_index_count = try reader.readIntBig(u16);
-
-        print("  Selected Language:\n", .{});
-        print("    feature_index_count:    {d}\n", .{feature_index_count});
-        print("    lookup_order_offset:    {d}\n", .{lookup_order_offset});
-        print("    required_feature_index: 0x{x}\n", .{required_feature_index});
-
-        try fixed_buffer_stream.seekTo(data_sections.gpos.offset + lookup_list_offset);
-        const lookup_entry_count = try reader.readIntBig(u16);
-
-        print("  Lookup Entries:\n", .{});
-        i = 0;
-        while (i < lookup_entry_count) : (i += 1) {
-            const lookup_offset = try reader.readIntBig(u16);
-            const saved_offset = try fixed_buffer_stream.getPos();
-            const lookup_table_offset = data_sections.gpos.offset + lookup_list_offset + lookup_offset;
-            try fixed_buffer_stream.seekTo(lookup_table_offset);
-            const lookup_type = try reader.readEnum(GPosLookupType, .Big);
-            const lookup_flag = try reader.readIntBig(u16);
-            const subtable_count = try reader.readIntBig(u16);
-            _ = lookup_flag;
-            print("  {d:2}. {s} subtable_count: {d}\n", .{ i + 1, @tagName(lookup_type), subtable_count });
-
-            var j: usize = 0;
-            switch (lookup_type) {
-                .single_adjustment => {
-                    while (j < subtable_count) : (j += 1) {
-                        const subtable_offset = try reader.readIntBig(u16);
-                        const subtable_offset_absolute = lookup_table_offset + subtable_offset;
-                        const saved_lookup_offset = try fixed_buffer_stream.getPos();
-                        try fixed_buffer_stream.seekTo(subtable_offset_absolute);
-                        const pos_format = try reader.readIntBig(u16);
-                        const coverage_offset = try reader.readIntBig(u16);
-                        _ = coverage_offset;
-                        const format_flags = @bitCast(ValueRecordFormatFlags, try reader.readIntBig(u16));
-                        switch (pos_format) {
-                            1 => {
-                                var value_record: ValueRecord = undefined;
-                                value_record.x_placement = try reader.readIntBig(i16);
-                                value_record.y_placement = try reader.readIntBig(i16);
-                                value_record.x_advance = try reader.readIntBig(i16);
-                                value_record.y_advance = try reader.readIntBig(i16);
-                                value_record.x_placement_device_offset = try reader.readIntBig(u16);
-                                value_record.y_placement_device_offset = try reader.readIntBig(u16);
-                                value_record.x_advance_device_offset = try reader.readIntBig(u16);
-                                value_record.y_advance_device_offset = try reader.readIntBig(u16);
-                                print("   ======================================\n", .{});
-                                if (format_flags.x_placement)
-                                    print("      x_placement: {d}\n", .{value_record.x_placement});
-                                if (format_flags.y_placement)
-                                    print("      y_placement: {d}\n", .{value_record.y_placement});
-                                if (format_flags.x_advance)
-                                    print("      x_advance: {d}\n", .{value_record.x_advance});
-                                if (format_flags.y_advance)
-                                    print("      y_advance: {d}\n", .{value_record.y_advance});
-                            },
-                            2 => {
-                                // TODO:
-                                unreachable;
-                            },
-                            else => std.log.warn("Invalid posFormat value '{d}' for Single Adjustment lookup", .{pos_format}),
-                        }
-                        try fixed_buffer_stream.seekTo(saved_lookup_offset);
-                    }
-                },
-                .pair_adjustment => {
-                    print("  Pair Adjustment\n", .{});
-                    while (j < subtable_count) : (j += 1) {
-                        print("    Subtable {d}\n", .{j + 1});
-                        const subtable_offset = try reader.readIntBig(u16);
-                        const subtable_offset_absolute = lookup_table_offset + subtable_offset;
-                        const saved_lookup_offset = try fixed_buffer_stream.getPos();
-                        try fixed_buffer_stream.seekTo(subtable_offset_absolute);
-                        const pos_format = try reader.readIntBig(u16);
-                        switch (pos_format) {
-                            1 => {
-                                const coverage_offset = try reader.readIntBig(u16);
-                                const coverage_offset_absolute = coverage_offset + subtable_offset_absolute;
-                                const saved_subtable_offset = try fixed_buffer_stream.getPos();
-                                try fixed_buffer_stream.seekTo(coverage_offset_absolute);
-                                const coverage_format = try reader.readIntBig(u16);
-                                switch (coverage_format) {
-                                    1 => {
-                                        const glyph_count = try reader.readIntBig(u16);
-                                        print("      {d} glyph entries in coverage\n", .{glyph_count});
-                                    },
-                                    2 => {
-                                        // TODO:
-                                        std.log.warn("posFormat 2 not implemented for `coverage` table", .{});
-                                    },
-                                    else => std.log.warn("Invalid coverage format {d}", .{coverage_format}),
-                                }
-                                try fixed_buffer_stream.seekTo(saved_subtable_offset);
-                                const value_format_1 = try reader.readIntBig(u16);
-                                const value_format_2 = try reader.readIntBig(u16);
-                                const pair_set_count = try reader.readIntBig(u16);
-                                print("      {d} pair sets\n", .{pair_set_count});
-                                _ = value_format_1;
-                                _ = value_format_2;
-                            },
-                            2 => {
-                                // TODO:
-                                std.log.warn("posFormat 2 not implemented for lookup type `pair_adjustment`", .{});
-                            },
-                            else => std.log.warn("Invalid posFormat ({d}) for lookup type `pair_adjustment`", .{pos_format}),
-                        }
-                        try fixed_buffer_stream.seekTo(saved_lookup_offset);
-                    }
-                },
-                .cursive_adjustment => {
-                    //
-                },
-                .mark_to_base => {
-                    //
-                },
-                .mark_to_ligature => {
-                    //
-                },
-                .mark_to_mark => {
-                    //
-                },
-                .context => {
-                    //
-                },
-                .chained_context => {
-                    //
-                },
-                .extension => {
-                    //
-                },
-                else => {
-                    std.log.warn("Invalid lookup type", .{});
-                },
-            }
-            try fixed_buffer_stream.seekTo(saved_offset);
-        }
+        print("\nGPOS\n", .{});
+        const section_start = data_sections.gpos.offset;
+        const section_end = section_start + data_sections.gpos.length;
+        try kernPairsGPOS(allocator, font_data[section_start..section_end]);
     }
 
     {
@@ -831,7 +659,7 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
         const ul_unicode_range2 = try reader.readIntBig(u32);
         const ul_unicode_range3 = try reader.readIntBig(u32);
         const ul_unicode_range4 = try reader.readIntBig(u32);
-        const vender_id = try reader.readIntBig(Tag);
+        const vender_id = try reader.readIntBig(u32);
         const fs_selection = try reader.readIntBig(u16);
         const us_first_char_index = try reader.readIntBig(u16);
         const us_last_char_index = try reader.readIntBig(u16);
@@ -1043,4 +871,243 @@ fn dump(allocator: std.mem.Allocator, font_data: []const u8) !void {
     }
 
     print("\nFont successfully parsed\n", .{});
+}
+
+fn kernPairsGPOS(allocator: std.mem.Allocator, gpos_section: []const u8) !void {
+    var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+        .buffer = gpos_section,
+        .pos = 0,
+    };
+    var reader = fixed_buffer_stream.reader();
+
+    const version_major = try reader.readIntBig(i16);
+    const version_minor = try reader.readIntBig(i16);
+    const script_list_offset = try reader.readIntBig(u16);
+    const feature_list_offset = try reader.readIntBig(u16);
+    const lookup_list_offset = try reader.readIntBig(u16);
+
+    _ = feature_list_offset;
+
+    if (!(version_major == 1 and (version_minor == 0 or version_minor == 1))) {
+        // TODO: Add source
+        std.log.warn("GPOS version major should be 0, or 1. Found {d}", .{version_major});
+    }
+
+    if (version_minor == 1) {
+        _ = try reader.readIntBig(u32); // feature variation offset
+    }
+
+    //
+    // Jump to ScriptList table
+    // https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2#script-list-table-and-script-record
+    //
+    try fixed_buffer_stream.seekTo(script_list_offset);
+    const script_count = try reader.readIntBig(u16);
+
+    const script_records = try allocator.alloc(ScriptTable, script_count);
+
+    defer {
+        for (script_records) |*script_record| {
+            allocator.free(script_record.language_records);
+        }
+        allocator.free(script_records);
+    }
+
+    var i: usize = 0;
+    while (i < script_count) : (i += 1) {
+        _ = try reader.read(&script_records[i].tag);
+        script_records[i].script_table_offset = try reader.readIntBig(u16);
+    }
+
+    //
+    // For each loaded Script Record, jump to Script table and load LanguageRecords
+    // https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2#script-table-and-language-system-record
+    //
+    i = 0;
+    while (i < script_count) : (i += 1) {
+        var script_record = &script_records[i];
+        try fixed_buffer_stream.seekTo(script_list_offset + script_record.script_table_offset);
+        script_record.default_language_offset = try reader.readIntBig(u16);
+        script_record.language_count = try reader.readIntBig(u16);
+        script_record.language_records = try allocator.alloc(LanguageRecordTable, script_record.language_count);
+        var j: usize = 0;
+        while (j < script_record.language_count) : (j += 1) {
+            _ = try reader.read(&script_record.language_records[j].tag);
+            script_record.language_records[j].offset = try reader.readIntBig(u16);
+        }
+    }
+
+    var default_lang_offset: u16 = 0;
+
+    print("  version: {d}.{d}\n", .{ version_major, version_minor });
+    print("  scripts:\n", .{});
+    for (script_records) |script_record, script_record_i| {
+        print("    {d}. {s}\n", .{ script_record_i + 1, script_record.tag });
+
+        if (std.mem.eql(u8, "DFLT", &script_record.tag)) {
+            default_lang_offset = script_record.script_table_offset + script_record.default_language_offset;
+        }
+
+        if (script_record.language_records.len == 0)
+            continue;
+
+        for (script_record.language_records) |language_record, language_record_i| {
+            print("      {d}. {s}\n", .{ language_record_i + 1, language_record.tag });
+        }
+        print("\n", .{});
+    }
+
+    //
+    // Proceed with the language offset for the DFLT table
+    //
+
+    if (default_lang_offset == 0) {
+        return error.NoDefaultLang;
+    }
+
+    print("  ** Proceeding with `DFLT` Table **\n\n", .{});
+
+    //
+    // Jump to Language System Table
+    // https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2#language-system-table
+    //
+    try fixed_buffer_stream.seekTo(script_list_offset + default_lang_offset);
+    const lookup_order_offset = try reader.readIntBig(u16);
+    const required_feature_index = try reader.readIntBig(u16);
+    const feature_index_count = try reader.readIntBig(u16);
+
+    _ = required_feature_index;
+    _ = feature_index_count;
+    _ = lookup_order_offset;
+
+    //
+    // Jump to Lookup List Table
+    // https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2#lookup-list-table
+    //
+    try fixed_buffer_stream.seekTo(lookup_list_offset);
+    const lookup_entry_count = try reader.readIntBig(u16);
+
+    print("  Lookup tables:\n", .{});
+    var subtable_offset_buffer: [20]u16 = undefined;
+    var pair_adjustment_subtable_count: usize = 0;
+    i = 0;
+    while (i < lookup_entry_count) : (i += 1) {
+        const lookup_offset = try reader.readIntBig(u16);
+        const saved_offset = try fixed_buffer_stream.getPos();
+        //
+        // Jump to Lookup Table
+        // https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2#lookup-table
+        //
+        const lookup_offset_absolute = lookup_list_offset + lookup_offset;
+        try fixed_buffer_stream.seekTo(lookup_offset_absolute);
+        const lookup_type = try reader.readEnum(GPosLookupType, .Big);
+        _ = try reader.readIntBig(u16); // lookup_flag
+        const subtable_count = try reader.readIntBig(u16);
+
+        if (lookup_type == .pair_adjustment) {
+            pair_adjustment_subtable_count = subtable_count;
+            // TODO:
+            std.debug.assert(subtable_count <= 20);
+            var j: usize = 0;
+            while (j < subtable_count) : (j += 1) {
+                subtable_offset_buffer[j] = (try reader.readIntBig(u16)) + lookup_offset_absolute;
+            }
+        }
+        try fixed_buffer_stream.seekTo(saved_offset);
+        print("    {d}. {s} with {d} subtables\n", .{ i + 1, @tagName(lookup_type), subtable_count });
+    }
+
+    if (pair_adjustment_subtable_count == 0) {
+        std.log.err("No `adjustment_pair` lookup found", .{});
+        return;
+    }
+
+    const subtable_offsets_absolute = subtable_offset_buffer[0..pair_adjustment_subtable_count];
+    print("\n  ** Proceeding with `pair_adjustment` Lookup **\n\n", .{});
+
+    //
+    // Jump to each subtable for lookup type `pair_adjustment`
+    //
+    for (subtable_offsets_absolute) |subtable_offset| {
+        try fixed_buffer_stream.seekTo(subtable_offset);
+        const pos_format = try reader.readIntBig(u16);
+        const coverage_offset = try reader.readIntBig(u16);
+        const coverage_offset_absolute = coverage_offset + subtable_offset;
+        try fixed_buffer_stream.seekTo(coverage_offset_absolute);
+        switch (pos_format) {
+            1 => {
+                std.log.warn("pos_format 1 not supported for pair_adjustment", .{});
+            },
+            2 => {
+                std.log.warn("pos_format 2 not supported for pair_adjustment", .{});
+            },
+            else => {
+                std.log.err("gpos: Invalid pos_format {d} for pair_adjustment subtable", .{
+                    pos_format,
+                });
+                continue;
+            },
+        }
+    }
+}
+
+fn cmapOffset() !u32 {
+    const section_start = data_sections.cmap.offset;
+    const section_end = section_start + data_sections.cmap.length;
+    const cmap_section = font_data[section_start..section_end];
+    var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+        .buffer = cmap_section,
+        .pos = 0,
+    };
+    var reader = fixed_buffer_stream.reader();
+
+    _ = try reader.readIntBig(u16); // version
+    const encoding_record_count = try reader.readIntBig(u16);
+
+    var i: usize = 0;
+    while (i < encoding_record_count) : (i += 1) {
+        const platform_id = try reader.readEnum(CMAPPlatformID, .Big);
+        _ = try reader.readIntBig(u16); // encoding_id
+        const subtable_offset = try reader.readIntBig(u32);
+        if (platform_id == .unicode) {
+            return data_sections.cmap.offset + subtable_offset;
+        }
+    }
+    unreachable;
+}
+
+fn coverageIndexForGlyphID(coverage: []const u8, target_glyph_id: u16) !?u16 {
+    var fixed_buffer_stream = std.io.FixedBufferStream([]const u8){
+        .buffer = coverage,
+        .pos = 0,
+    };
+    var reader = fixed_buffer_stream.reader();
+    const coverage_format = try reader.readIntBig(u16);
+    switch (coverage_format) {
+        1 => {
+            const glyph_count = try reader.readIntBig(u16);
+            var i: usize = 0;
+            while (i < glyph_count) : (i += 1) {
+                const glyph_id = try reader.readIntBig(u16);
+                if (glyph_id == target_glyph_id) {
+                    return @intCast(u16, i);
+                }
+            }
+        },
+        2 => {
+            std.debug.assert(false);
+            const range_count = try reader.readIntBig(u16);
+            var i: usize = 0;
+            while (i < range_count) : (i += 1) {
+                const glyph_start = try reader.readIntBig(u16);
+                const glyph_end = try reader.readIntBig(u16);
+                const base_coverage_index = try reader.readIntBig(u16);
+                if (target_glyph_id >= glyph_start and target_glyph_id <= glyph_end) {
+                    return @intCast(u16, base_coverage_index + (i - glyph_start));
+                }
+            }
+        },
+        else => return null,
+    }
+    return null;
 }
